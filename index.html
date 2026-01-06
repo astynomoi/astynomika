@@ -384,25 +384,40 @@
           "Εμφάνιση των τελευταίων 10 εγγράφων";
       }
 
+      // Debounce utility function
+      function debounce(func, delay) {
+        let timeoutId;
+        return function (...args) {
+          clearTimeout(timeoutId);
+          timeoutId = setTimeout(() => {
+            func.apply(this, args);
+          }, delay);
+        };
+      }
+
+      // Search handler function
+      function handleSearch(query) {
+        const trimmedQuery = query.trim();
+
+        if (trimmedQuery === "") {
+          displayLatestDocuments();
+        } else {
+          const results = fuse.search(trimmedQuery);
+          currentDisplay = results.map((r) => r.item);
+          renderDocuments(currentDisplay);
+          document.getElementById(
+            "resultCount"
+          ).textContent = `Βρέθηκαν ${currentDisplay.length} αποτελέσματα`;
+        }
+      }
+
+      // Create debounced search function with 300ms delay
+      const debouncedSearch = debounce(handleSearch, 300);
+
+      // Attach to search input
       const searchInput = document.getElementById("searchInput");
-      let searchTimeout;
-
       searchInput.addEventListener("input", (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => {
-          const query = e.target.value.trim();
-
-          if (query === "") {
-            displayLatestDocuments();
-          } else {
-            const results = fuse.search(query);
-            currentDisplay = results.map((r) => r.item);
-            renderDocuments(currentDisplay);
-            document.getElementById(
-              "resultCount"
-            ).textContent = `Βρέθηκαν ${currentDisplay.length} αποτελέσματα`;
-          }
-        }, 300);
+        debouncedSearch(e.target.value);
       });
 
       function renderDocuments(documents) {
