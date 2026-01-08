@@ -303,6 +303,7 @@
 
     <script>
       let allDocuments = [];
+      let folderUrls = {};
       let fuse = null;
       let currentDisplay = [];
 
@@ -348,7 +349,11 @@
           const response = await fetch("data.json");
           if (!response.ok) throw new Error("Failed to fetch data");
 
-          allDocuments = await response.json();
+          const data = await response.json();
+
+          // Support both new object format and old array format for safety
+          allDocuments = data.documents || data;
+          folderUrls = data.folderUrls || {};
 
           fuse = new Fuse(allDocuments, {
             keys: [
@@ -371,7 +376,6 @@
           document.getElementById("errorState").classList.remove("hidden");
         }
       }
-
       function displayLatestDocuments() {
         const sorted = [...allDocuments].sort((a, b) => {
           const dateA = new Date(a.modifiedAt || a.createdAt);
@@ -420,6 +424,11 @@
         debouncedSearch(e.target.value);
       });
 
+      function getFolderUrlForTag(docTags, tagIndex) {
+        // Reconstruct the path up to the clicked tag
+        const path = docTags.slice(0, tagIndex + 1).join("/");
+        return folderUrls[path] || "#";
+      }
       function renderDocuments(documents) {
         const grid = document.getElementById("documentGrid");
         const noResults = document.getElementById("noResults");
@@ -459,13 +468,22 @@
                     <div class="flex flex-wrap gap-2 mb-4">
                         ${doc.tags
                           .slice(0, 3)
-                          .map(
-                            (tag) => `
-                            <span class="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded">
-                                ${escapeHtml(tag)}
-                            </span>
-                        `
-                          )
+                          .map((tag, idx) => {
+                            const url = getFolderUrlForTag(doc.tags, idx);
+                            const hasUrl = url !== "#";
+                            return `
+      <a href="${url}" 
+         target="_blank" 
+         onclick="event.stopPropagation();"
+         class="px-2 py-1 text-xs rounded transition-all duration-200 ${
+           hasUrl
+             ? "bg-blue-50 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-600/60 dark:hover:text-blue-100"
+             : "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+         }">
+        ${escapeHtml(tag)}
+      </a>
+    `;
+                          })
                           .join("")}
                         ${
                           doc.tags.length > 3
@@ -485,25 +503,53 @@
       const modal = document.getElementById("modal");
       const closeModalBtn = document.getElementById("closeModal");
 
+      // Modified openModal function to display document in iframe or fallback to content
       function openModal(doc) {
         document.getElementById("modalTitle").textContent = doc.title;
         document.getElementById("modalTags").innerHTML = doc.tags
-          .map(
-            (tag) => `
-                <span class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full">
-                    ${escapeHtml(tag)}
-                </span>
-            `
-          )
+          .map((tag, idx) => {
+            const url = getFolderUrlForTag(doc.tags, idx);
+            return `
+      <a href="${url}" 
+         target="_blank"
+         class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors">
+          ${escapeHtml(tag)}
+      </a>
+    `;
+          })
           .join("");
 
         const contentDiv = document.getElementById("modalContent");
-        if (doc.type === "docx" || doc.type === "doc") {
-          contentDiv.innerHTML = doc.content;
+
+        // Check if previewUrl exists and is not empty
+        if (doc.previewUrl && doc.previewUrl.trim() !== "") {
+          // Display document in iframe if URL is available
+          contentDiv.innerHTML = `
+      <div class="w-full h-[60vh] border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+        <iframe 
+          src="${doc.previewUrl}" 
+          class="w-full h-full"
+          frameborder="0"
+          title="Document preview"
+        ></iframe>
+      </div>
+    `;
+          // Show the link button
+          document.getElementById("modalLink").classList.remove("hidden");
+          document.getElementById("modalLink").href = doc.previewUrl;
         } else {
-          contentDiv.innerHTML = `<pre class="whitespace-pre-wrap">${escapeHtml(
-            doc.content
-          )}</pre>`;
+          // Fallback: display content from JSON
+          if (doc.type === "docx" || doc.type === "doc") {
+            // DOCX content is already HTML formatted
+            contentDiv.innerHTML = doc.content;
+          } else {
+            // PDF content is plain text, display with preserved formatting
+            contentDiv.innerHTML = `<pre class="whitespace-pre-wrap text-sm leading-relaxed">${escapeHtml(
+              doc.content
+            )}</pre>`;
+          }
+          // Hide the link button since there's no URL
+          document.getElementById("modalLink").classList.add("hidden");
         }
 
         document.getElementById(
@@ -511,12 +557,223 @@
         ).textContent = `Τελευταία ενημέρωση: ${formatDate(
           doc.modifiedAt || doc.createdAt
         )}`;
-        document.getElementById("modalLink").href = doc.previewUrl;
+
+        modal.classList.add("active");
+        document.body.style.overflow = "hidden";
+      } // Modified openModal function to display document in iframe or fallback to content
+      function openModal(doc) {
+        document.getElementById("modalTitle").textContent = doc.title;
+        document.getElementById("modalTags").innerHTML = doc.tags
+          .map(
+            (tag) => `
+          <span class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full">
+              ${escapeHtml(tag)}
+          </span>
+      `
+          )
+          .join("");
+
+        const contentDiv = document.getElementById("modalContent");
+
+        // Check if previewUrl exists and is not empty
+        if (doc.previewUrl && doc.previewUrl.trim() !== "") {
+          // Display document in iframe if URL is available
+          contentDiv.innerHTML = `
+      <div class="w-full h-[60vh] border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+        <iframe 
+          src="${doc.previewUrl}" 
+          class="w-full h-full"
+          frameborder="0"
+          title="Document preview"
+        ></iframe>
+      </div>
+    `;
+          // Show the link button
+          document.getElementById("modalLink").classList.remove("hidden");
+          document.getElementById("modalLink").href = doc.previewUrl;
+        } else {
+          // Fallback: display content from JSON
+          if (doc.type === "docx" || doc.type === "doc") {
+            // DOCX content is already HTML formatted
+            contentDiv.innerHTML = doc.content;
+          } else {
+            // PDF content is plain text, display with preserved formatting
+            contentDiv.innerHTML = `<pre class="whitespace-pre-wrap text-sm leading-relaxed">${escapeHtml(
+              doc.content
+            )}</pre>`;
+          }
+          // Hide the link button since there's no URL
+          document.getElementById("modalLink").classList.add("hidden");
+        }
+
+        document.getElementById(
+          "modalDate"
+        ).textContent = `Τελευταία ενημέρωση: ${formatDate(
+          doc.modifiedAt || doc.createdAt
+        )}`;
+
+        modal.classList.add("active");
+        document.body.style.overflow = "hidden";
+      } // Modified openModal function to display document in iframe or fallback to content
+      function openModal(doc) {
+        document.getElementById("modalTitle").textContent = doc.title;
+        document.getElementById("modalTags").innerHTML = doc.tags
+          .map(
+            (tag) => `
+          <span class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full">
+              ${escapeHtml(tag)}
+          </span>
+      `
+          )
+          .join("");
+
+        const contentDiv = document.getElementById("modalContent");
+
+        // Check if previewUrl exists and is not empty
+        if (doc.previewUrl && doc.previewUrl.trim() !== "") {
+          // Display document in iframe if URL is available
+          contentDiv.innerHTML = `
+      <div class="w-full h-[60vh] border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+        <iframe 
+          src="${doc.previewUrl}" 
+          class="w-full h-full"
+          frameborder="0"
+          title="Document preview"
+        ></iframe>
+      </div>
+    `;
+          // Show the link button
+          document.getElementById("modalLink").classList.remove("hidden");
+          document.getElementById("modalLink").href = doc.previewUrl;
+        } else {
+          // Fallback: display content from JSON
+          if (doc.type === "docx" || doc.type === "doc") {
+            // DOCX content is already HTML formatted
+            contentDiv.innerHTML = doc.content;
+          } else {
+            // PDF content is plain text, display with preserved formatting
+            contentDiv.innerHTML = `<pre class="whitespace-pre-wrap text-sm leading-relaxed">${escapeHtml(
+              doc.content
+            )}</pre>`;
+          }
+          // Hide the link button since there's no URL
+          document.getElementById("modalLink").classList.add("hidden");
+        }
+
+        document.getElementById(
+          "modalDate"
+        ).textContent = `Τελευταία ενημέρωση: ${formatDate(
+          doc.modifiedAt || doc.createdAt
+        )}`;
+
+        modal.classList.add("active");
+        document.body.style.overflow = "hidden";
+      } // Helper function to convert Google Drive URL to embed format
+      function getEmbedUrl(url) {
+        // Check if it's a Google Drive URL
+        const driveMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+        if (driveMatch) {
+          return `https://drive.google.com/file/d/${driveMatch[1]}/preview`;
+        }
+        return url;
+      }
+
+      // Helper function to display content fallback
+      function displayContentFallback(doc, contentDiv) {
+        if (doc.type === "docx" || doc.type === "doc") {
+          contentDiv.innerHTML = doc.content;
+        } else {
+          contentDiv.innerHTML = `<pre class="whitespace-pre-wrap text-sm leading-relaxed">${escapeHtml(
+            doc.content
+          )}</pre>`;
+        }
+        document.getElementById("modalLink").classList.add("hidden");
+      }
+
+      // Modified openModal function with better iframe handling
+      function openModal(doc) {
+        document.getElementById("modalTitle").textContent = doc.title;
+        document.getElementById("modalTags").innerHTML = doc.tags
+          .map(
+            (tag) => `
+          <span class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full">
+              ${escapeHtml(tag)}
+          </span>
+      `
+          )
+          .join("");
+
+        const contentDiv = document.getElementById("modalContent");
+
+        // Check if previewUrl exists and is not empty
+        if (doc.previewUrl && doc.previewUrl.trim() !== "") {
+          const embedUrl = getEmbedUrl(doc.previewUrl);
+
+          // Create iframe with error handling
+          contentDiv.innerHTML = `
+      <div class="w-full h-[60vh] border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div id="iframeLoader" class="text-center">
+          <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent mb-2"></div>
+          <p class="text-gray-600 dark:text-gray-400 text-sm">Φόρτωση εγγράφου...</p>
+        </div>
+        <iframe 
+          id="docIframe"
+          src="${embedUrl}" 
+          class="w-full h-full hidden"
+          frameborder="0"
+          title="Document preview"
+        ></iframe>
+        <div id="iframeError" class="hidden text-center p-6">
+          <div class="text-yellow-500 text-4xl mb-3">⚠️</div>
+          <p class="text-gray-700 dark:text-gray-300 mb-2">Δεν ήταν δυνατή η προεπισκόπηση του εγγράφου</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Το έγγραφο ενδέχεται να απαιτεί άδεια πρόσβασης</p>
+          <button onclick="window.open('${doc.previewUrl}', '_blank')" class="gov-blue text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors">
+            Άνοιγμα σε νέα καρτέλα
+          </button>
+        </div>
+      </div>
+    `;
+
+          // Handle iframe load events
+          const iframe = document.getElementById("docIframe");
+          const loader = document.getElementById("iframeLoader");
+          const errorDiv = document.getElementById("iframeError");
+
+          let loadTimeout = setTimeout(() => {
+            // If iframe doesn't load in 5 seconds, show error
+            loader.classList.add("hidden");
+            errorDiv.classList.remove("hidden");
+          }, 5000);
+
+          iframe.onload = function () {
+            clearTimeout(loadTimeout);
+            loader.classList.add("hidden");
+            iframe.classList.remove("hidden");
+          };
+
+          iframe.onerror = function () {
+            clearTimeout(loadTimeout);
+            loader.classList.add("hidden");
+            errorDiv.classList.remove("hidden");
+          };
+
+          // Show the link button
+          document.getElementById("modalLink").classList.remove("hidden");
+          document.getElementById("modalLink").href = doc.previewUrl;
+        } else {
+          // Fallback: display content from JSON
+          displayContentFallback(doc, contentDiv);
+        }
+
+        document.getElementById(
+          "modalDate"
+        ).textContent = `Τελευταία ενημέρωση: ${formatDate(
+          doc.modifiedAt || doc.createdAt
+        )}`;
 
         modal.classList.add("active");
         document.body.style.overflow = "hidden";
       }
-
       function closeModal() {
         modal.classList.remove("active");
         document.body.style.overflow = "";
